@@ -2,6 +2,7 @@ import os
 import requests
 from bs4 import BeautifulSoup
 import datetime
+from urllib.parse import unquote
 
 # --- GitHub Secrets ---
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
@@ -73,7 +74,10 @@ def check_and_download(url, newspaper_name):
             print(f"Downloading PDF from {pdf_url}...")
             pdf_response = requests.get(pdf_url)
             
-            file_name = f"{newspaper_name}.pdf"
+            # --- ပြင်ဆင်ချက်: မူရင်းဖိုင်နာမည်ကို ယူခြင်း ---
+            original_filename = unquote(pdf_url.split('/')[-1])
+            file_name = original_filename
+            
             with open(file_name, 'wb') as f:
                 f.write(pdf_response.content)
             
