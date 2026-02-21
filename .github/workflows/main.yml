@@ -2,16 +2,15 @@ name: Daily Newspaper Bot
 
 on:
   schedule:
-    - cron: '30 0 * * *' # 7:00 AM Myanmar Time
+    - cron: '30 0 * * *'
   workflow_dispatch:
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    permissions: # Keepalive အတွက် ခွင့်ပြုချက် တောင်းခြင်း
-      actions: write
-      contents: write
-      
+    permissions:
+      contents: read # Read only for now to fix the error
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -30,7 +29,3 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
         run: python bot_auto.py
-        
-      # --- ဒီအောက်က အပိုင်းက ၆၀ ရက် ပြည့်ရင် မရပ်အောင် ကာကွယ်ပေးပါမယ် ---
-      - name: Keepalive Workflow
-        uses: gautamkrishnar/keepalive-workflow@v1
