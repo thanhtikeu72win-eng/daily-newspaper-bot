@@ -2,14 +2,14 @@ name: Daily Newspaper Bot
 
 on:
   schedule:
-    - cron: '30 0 * * *'
+    - cron: '30 0 * * *' # 7:00 AM Myanmar Time
   workflow_dispatch:
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
     permissions:
-      contents: read # Read only for now to fix the error
+      contents: write # Keepalive အတွက် ရေးခွင့်ပြုခြင်း
 
     steps:
       - name: Checkout code
@@ -29,3 +29,7 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
         run: python bot_auto.py
+        
+      # --- ၆၀ ရက်မကျော်အောင် ကာကွယ်ပေးမည့် အပိုင်း ---
+      - name: Keepalive Workflow
+        uses: gautamkrishnar/keepalive-workflow@v1
