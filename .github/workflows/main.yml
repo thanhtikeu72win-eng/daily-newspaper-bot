@@ -9,7 +9,7 @@ jobs:
   run-bot:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Keepalive အတွက် ရေးခွင့်ပြုခြင်း
+      contents: write # ရေးခွင့်ပြုခြင်း
 
     steps:
       - name: Checkout code
@@ -30,6 +30,10 @@ jobs:
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
         run: python bot_auto.py
         
-      # --- ၆၀ ရက်မကျော်အောင် ကာကွယ်ပေးမည့် အပိုင်း ---
-      - name: Keepalive Workflow
-        uses: gautamkrishnar/keepalive-workflow@v1
+      # --- ၆၀ ရက်မကျော်အောင် ကာကွယ်ပေးမည့် အရိုးရှင်းဆုံးနည်းလမ်း ---
+      - name: Keepalive Commit
+        run: |
+          git config --global user.name "GitHub Action"
+          git config --global user.email "action@github.com"
+          git commit --allow-empty -m "keepalive"
+          git push
