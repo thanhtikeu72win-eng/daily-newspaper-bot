@@ -2,14 +2,14 @@ name: Daily Newspaper Bot
 
 on:
   schedule:
-    - cron: '30 0 * * *' # 7:00 AM Myanmar Time
+    - cron: '30 0 * * *' # 00:00 UTC = 06:30 AM MM Time
   workflow_dispatch:
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # ရေးခွင့်ပြုခြင်း
+      contents: write
 
     steps:
       - name: Checkout code
@@ -30,10 +30,10 @@ jobs:
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
         run: python bot_auto.py
         
-      # --- ၆၀ ရက်မကျော်အောင် ကာကွယ်ပေးမည့် အရိုးရှင်းဆုံးနည်းလမ်း ---
       - name: Keepalive Commit
         run: |
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
-          git commit --allow-empty -m "keepalive"
+          git pull --rebase
+          git commit --allow-empty -m "keepalive" || echo "No changes to commit"
           git push
