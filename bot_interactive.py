@@ -1,101 +1,117 @@
 import os
-import time
 import telebot
-from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
-from flask import Flask
-from threading import Thread
+import requests
 import schedule
-from datetime import datetime
+import time
 import pytz
+from datetime import datetime
+from threading import Thread
+from flask import Flask
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# Render မှ Environment Variables များ
+# 1. Setup
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
-CHANNEL_ID = os.environ.get('CHANNEL_ID') # Render မှာ ထပ်ထည့်ပေးရပါမယ်
+CHANNEL_ID = os.environ.get('CHANNEL_ID') # Render မှာ Env Variable အနေနဲ့ ထည့်ထားဖို့ လိုပါတယ် (ဥပမာ @kyaymoneNews)
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# ==========================================
-# ၁။ Bot အောက်ခြေ Menu နှင့် စာပြန်ခြင်း စနစ်
-# ==========================================
+# ===========================
+# အပိုင်း (က) - User Interactive (Archive Search)
+# ===========================
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    # အောက်ခြေမှာ အမြဲပေါ်နေမယ့် ခလုတ် (၃) ခု ဖန်တီးခြင်း
-    markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    btn1 = KeyboardButton("🔍 သတင်းစာရှာရန်")
-    btn2 = KeyboardButton("📊 ယနေ့ပေါက်ဈေး")
-    btn3 = KeyboardButton("📞 Admin သို့ ဆက်သွယ်ရန်")
-    markup.add(btn1, btn2, btn3)
-    
-    bot.send_message(message.chat.id, "မင်္ဂလာပါ! အောက်ပါ Menu များမှ ရွေးချယ်နိုင်ပါသည် 👇", reply_markup=markup)
+    text = message.text.split()
+    if len(text) > 1 and text[1] == 'archive':
+        bot.reply_to(message, "📅 ဘယ်ရက်စွဲ လိုချင်ပါသလဲ? (ဥပမာ - 21-2-2026 ဟု ရိုက်ပေးပါ)")
+    else:
+        bot.reply_to(message, "မင်္ဂလာပါ! Archive ရှာလိုပါက Channel Menu မှတဆင့် ဝင်ရောက်ပါ။")
 
 @bot.message_handler(func=lambda msg: True)
-def handle_messages(message):
+def echo_all(message):
     text = message.text.strip()
     
-    if text == "🔍 သတင်းစာရှာရန်" or text.lower() == "/archive":
-        bot.reply_to(message, "📅 ဘယ်ရက်စွဲ လိုချင်ပါသလဲ? (ဥပမာ - 21-2-2026 ဟု ရိုက်ပေးပါ)")
-        
-    elif text == "📊 ယနေ့ပေါက်ဈေး":
-        rates = get_daily_rates()
-        bot.reply_to(message, rates, parse_mode="Markdown")
-        
-    elif text == "📞 Admin သို့ ဆက်သွယ်ရန်":
-        bot.reply_to(message, "Admin နှင့် တိုက်ရိုက်ပြောဆိုရန် 👉 @thanhtikeu72win ကို နှိပ်ပါ။")
-        
-    elif "-" in text or "/" in text:
-        # Download Button နှင့် Google Link ပို့ပေးခြင်း
+    # ရက်စွဲပုံစံ စစ်ဆေးခြင်း (ရိုးရှင်းသောနည်းလမ်း)
+    if "-" in text or "/" in text:
+        # Google Search URL
         search_url = f"https://www.google.com/search?q=site:moi.gov.mm+\"{text}\"+Kyaymon"
+        
+        # Download Button
         markup = InlineKeyboardMarkup()
         btn = InlineKeyboardButton("📥 ဖတ်ရှုရန် / Download ယူရန်", url=search_url)
         markup.add(btn)
-        bot.reply_to(message, f"🔍 **{text}** အတွက် ရှာဖွေမှုရလဒ်:\n\n👇 အောက်ပါခလုတ်ကို နှိပ်ပါ။", reply_markup=markup, parse_mode="Markdown")
         
+        reply_text = f"🔍 **{text}** အတွက် ရှာဖွေမှုရလဒ် အသင့်ဖြစ်ပါပြီ။\n\n👇 အောက်ပါခလုတ်ကို နှိပ်ပါ။"
+        bot.reply_to(message, reply_text, reply_markup=markup, parse_mode="Markdown")
     else:
-        bot.reply_to(message, "⚠️ ကျေးဇူးပြု၍ အောက်ခြေ Menu မှ ရွေးချယ်ပါ သို့မဟုတ် ရက်စွဲကို (21-2-2026) ပုံစံဖြင့် ရိုက်ထည့်ပါ။")
+        pass # ရက်စွဲမဟုတ်ရင် ဘာမှမလုပ်ပါ
 
-# ==========================================
-# ၂။ ရွှေဈေး / ငွေဈေး Auto Post စနစ်
-# ==========================================
+# ===========================
+# အပိုင်း (ခ) - Morning Auto Post (Exchange Rates)
+# ===========================
 
-def get_daily_rates():
-    # မှတ်ချက်: တကယ့် Live ဈေးနှုန်းတွေကို Website တွေကနေ Auto ဆွဲယူဖို့က အနည်းငယ် ရှုပ်ထွေးပါတယ်။
-    # လောလောဆယ် ပုံစံပြ (Sample) အနေဖြင့်သာ ထည့်ထားပါသည်။ (နောင်တွင် API ဖြင့် ချိတ်ဆက်နိုင်သည်)
-    tz = pytz.timezone('Asia/Yangon')
-    today = datetime.now(tz).strftime("%d-%m-%Y")
-    
-    text = (
-        f"📊 **ယနေ့ပေါက်ဈေး ({today})**\n\n"
-        f"💵 ကန်ဒေါ်လာ (USD): ~ xxxx ကျပ်\n"
-        f"🥇 အကယ်ဒမီ မီးလင်းရွှေ: ~ xxxxx ကျပ်\n"
-        f"⛽ စက်သုံးဆီ (92): ~ xxxx ကျပ်\n\n"
-        f"*(မှတ်ချက်: ဤသည်မှာ ဥပမာပြသထားခြင်းသာ ဖြစ်ပါသည်။)*"
-    )
-    return text
+def get_exchange_rates():
+    try:
+        # ဗဟိုဘဏ် API မှ ယူခြင်း
+        url = "https://forex.cbm.gov.mm/api/latest"
+        response = requests.get(url).json()
+        rates = response['rates']
+        date_str = response['info']
+        
+        # အဓိက ငွေကြေးများ
+        usd = rates.get('USD', 'N/A')
+        eur = rates.get('EUR', 'N/A')
+        sgd = rates.get('SGD', 'N/A')
+        thb = rates.get('THB', 'N/A')
+        
+        msg = (
+            f"🌤 **မင်္ဂလာမနက်ခင်းပါ** ({date_str})\n\n"
+            f"🏦 **ဗဟိုဘဏ် ငွေလဲလှယ်နှုန်းများ**\n"
+            f"🇺🇸 USD: {usd} MMK\n"
+            f"🇪🇺 EUR: {eur} MMK\n"
+            f"🇸🇬 SGD: {sgd} MMK\n"
+            f"🇹🇭 THB: {thb} MMK\n\n"
+            f"🗞 _ဒီနေ့ သတင်းစာ ခဏအကြာတွင် ရောက်ရှိပါမည်..._"
+        )
+        return msg
+    except Exception as e:
+        print(f"Error fetching rates: {e}")
+        return "🌤 မင်္ဂလာမနက်ခင်းပါ! ဒီနေ့အတွက် သတင်းစာ မကြာမီ လာပါမည်။"
 
-def job_post_rates_to_channel():
+def send_morning_post():
     if CHANNEL_ID:
+        msg = get_exchange_rates()
         try:
-            rates_text = get_daily_rates()
-            bot.send_message(CHANNEL_ID, rates_text, parse_mode="Markdown")
-            print("Successfully posted daily rates to channel.")
+            bot.send_message(CHANNEL_ID, msg, parse_mode="Markdown")
+            print("Morning post sent!")
         except Exception as e:
-            print(f"Error posting rates: {e}")
+            print(f"Failed to send morning post: {e}")
 
-# ==========================================
-# ၃။ အချိန်ကိုက် လုပ်ဆောင်မည့် Scheduler
-# ==========================================
-
+# Scheduler Function (အချိန်ကိုက် စနစ်)
 def run_scheduler():
-    # နေ့စဉ် မြန်မာစံတော်ချိန် မနက် ၆ နာရီခွဲတွင် တင်ရန် (Render သည် UTC အချိန်ကို သုံးသဖြင့် UTC 00:00 ဟု ထားပါသည်)
-    schedule.every().day.at("00:00").do(job_post_rates_to_channel)
+    # မြန်မာစံတော်ချိန် မနက် ၆:၀၀ (MMT)
+    # Render Server က UTC ဖြစ်လို့ UTC 23:30 (Previous Day) ကို ချိန်ရပါတယ်
+    # ဒါမှမဟုတ် Library 'pytz' သုံးပြီး တိုက်ရိုက်ချိန်ပါမယ်
     
     while True:
-        schedule.run_pending()
-        time.sleep(60)
+        try:
+            # လက်ရှိ မြန်မာအချိန်ကို ယူမည်
+            tz = pytz.timezone('Asia/Yangon')
+            now = datetime.now(tz)
+            
+            # မနက် ၆ နာရီ ၀ မိနစ်၊ စက္ကန့် ၀ ဖြစ်ရင် Post တင်မယ်
+            if now.hour == 6 and now.minute == 0 and now.second < 10: # 10 seconds buffer
+                send_morning_post()
+                time.sleep(60) # တင်ပြီးရင် ၁ မိနစ် အိပ်မယ် (ထပ်မတင်အောင်)
+            
+            time.sleep(1) # ၁ စက္ကန့်တိုင်း စစ်မယ်
+        except Exception as e:
+            print(f"Scheduler Error: {e}")
+            time.sleep(5)
 
-# ==========================================
-# ၄။ Flask Server (Render အတွက် Keep-Alive)
-# ==========================================
+# ===========================
+# အပိုင်း (ဂ) - Web Server (Render Keep-Alive)
+# ===========================
+
 app = Flask('')
 
 @app.route('/')
@@ -105,7 +121,15 @@ def home():
 def run_http():
     app.run(host='0.0.0.0', port=8080)
 
+# Threading (လုပ်ငန်း ၃ ခု ပြိုင်တူ run ခြင်း)
 if __name__ == "__main__":
-    Thread(target=run_http).start()      # Server စတင်ခြင်း
-    Thread(target=run_scheduler).start() # Auto-Post အချိန်ကိုက်စနစ် စတင်ခြင်း
-    bot.infinity_polling()               # Bot စတင်ခြင်း
+    # 1. Start Web Server
+    t1 = Thread(target=run_http)
+    t1.start()
+    
+    # 2. Start Scheduler
+    t2 = Thread(target=run_scheduler)
+    t2.start()
+    
+    # 3. Start Bot Polling
+    bot.infinity_polling()
