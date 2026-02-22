@@ -41,7 +41,10 @@ def check_and_download(url, newspaper_name):
     print(f"🔍 Checking {newspaper_name}...")
     try:
         # Website ကို ချိတ်ဆက်ခြင်း (Timeout 30s)
-        response = requests.get(url, timeout=30)
+        headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+}
+response = requests.get(url, headers=headers, timeout=30)
         soup = BeautifulSoup(response.content, 'html.parser')
         
         article_link = None
