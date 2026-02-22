@@ -1,28 +1,35 @@
 import os
+import datetime
 import requests
 from bs4 import BeautifulSoup
-import datetime
 from urllib.parse import unquote
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, ChatMemberHandler
-from telegram.constants import ChatMemberStatus
-from flask import Flask
 from threading import Thread
+from flask import Flask
 
-# --- Flask Server (Render အတွက် မရှိမဖြစ်) ---
-app = Flask('')
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+    MessageHandler,
+    filters
+)
 
-@app.route('/')
+# --- Flask Server (Render အတွက်) ---
+# နာမည်ကို flask_app လို့ ပြောင်းလိုက်ပါမယ် (Telegram app နဲ့ မရောအောင်)
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
 def home():
     return "Bot is running!"
 
-def run():
-    # Render က ပေးမယ့် Port ကို သုံးပါမယ်
+def run_web_server():
     port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
+    flask_app.run(host='0.0.0.0', port=port)
 
 def keep_alive():
-    t = Thread(target=run)
+    t = Thread(target=run_web_server)
     t.start()
 
 # --- Secrets ---
@@ -60,6 +67,7 @@ def fetch_newspaper():
             target_path = '/km/' if 'km' in url else '/mal/'
             article_link = None
             
+            # Link ရှာဖွေခြင်း
             for link in soup.find_all('a', href=True):
                 href = link['href']
                 if target_path in href and any(char.isdigit() for char in href):
@@ -74,15 +82,18 @@ def fetch_newspaper():
             else:
                 full_url = article_link
             
+            # PDF ရှာဖွေခြင်း
             article_response = requests.get(full_url, timeout=30)
             article_soup = BeautifulSoup(article_response.content, 'html.parser')
             
             for link in article_soup.find_all('a', href=True):
-                if link['href'].endswith('.pdf'):
+                if link['href'].lower().endswith('.pdf'):
                     pdf_url = link['href']
                     if not pdf_url.startswith('http'):
                         pdf_url = "https://www.moi.gov.mm" + pdf_url
                     
+                    # PDF Download
+                    print(f"Downloading {name}...")
                     pdf_response = requests.get(pdf_url, timeout=60)
                     filename = unquote(pdf_url.split('/')[-1])
                     
@@ -100,7 +111,6 @@ def fetch_newspaper():
 # ===================== COMMAND HANDLERS =====================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Welcome Message + Menu"""
     welcome_text = """
 🇲🇲 *မြန်မာ့နေ့စဉ်သတင်းစာ Bot မှ ကြိုဆိုပါတယ်!*
 
@@ -120,7 +130,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Help Command"""
     help_text = """
 📖 *အသုံးပြုနည်း လမ်းညွှန်*
 
@@ -130,17 +139,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /archive - အရင်ရက်များ
 /subscribe - Notification ဖွင့်နည်း
 /help - ဒီစာမျက်နှာ
-
-*Channel:* @YourChannelUsername
-*နေ့စဉ် မနက် ၇:၀၀ နာရီ* တွင် အလိုအလျောက် ပို့ပေးပါသည်။
     """
     await update.message.reply_text(help_text, parse_mode='Markdown')
 
 async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Get Today's Newspaper"""
-    await update.message.reply_text("⏳ သတင်းစာ ရှာဖွေနေပါသည်... ခဏစောင့်ပါ။")
+    status_msg = await update.message.reply_text("⏳ သတင်းစာ ရှာဖွေနေပါသည်... ခဏစောင့်ပါ။")
     
-    filename, newspaper_name = fetch_newspaper()
+    # Run in thread to avoid blocking
+    filename, newspaper_name = await context.bot.loop.run_in_executor(None, fetch_newspaper)
     
     if filename:
         today_str = datetime.datetime.now().strftime("%d-%m-%Y")
@@ -149,18 +155,18 @@ async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with open(filename, 'rb') as f:
             await update.message.reply_document(document=f, caption=caption)
         
+        # Cleanup
         os.remove(filename)
+        await status_msg.delete()
     else:
-        await update.message.reply_text("⛔ ဒီနေ့ သတင်းစာ မတွေ့ပါ။ သတင်းစာတိုက် ပိတ်ရက် ဖြစ်နိုင်ပါသည်။")
+        await status_msg.edit_text("⛔ ဒီနေ့ သတင်းစာ မတွေ့ပါ။ သတင်းစာတိုက် ပိတ်ရက် သို့မဟုတ် Website Error ဖြစ်နိုင်ပါသည်။")
 
 async def archive_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Archive - Past Newspapers"""
     keyboard = [
         [InlineKeyboardButton("📰 ကြေးမုံ Archive", url="https://www.moi.gov.mm/km/")],
         [InlineKeyboardButton("📰 မြန်မာ့အလင်း Archive", url="https://www.moi.gov.mm/mal/")],
         [InlineKeyboardButton("🔙 နောက်သို့", callback_data='back_to_menu')]
     ]
-    
     await update.message.reply_text(
         "📚 *အရင်ရက်များက သတင်းစာများ*\n\nအောက်ပါ Link များတွင် ကြည့်ရှုနိုင်ပါသည်။",
         parse_mode='Markdown',
@@ -168,32 +174,28 @@ async def archive_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Subscribe Instructions"""
     subscribe_text = """
 🔔 *နေ့စဉ် Notification ရယူနည်း*
 
 *အဆင့် ၁:* Channel ကို Join လုပ်ပါ
-👉 @YourChannelUsername
+(Bot ပိုင်ရှင်မှ Channel Link ထည့်ပေးရန်)
 
 *အဆင့် ၂:* Notification ဖွင့်ပါ
 • Channel ထဲဝင်ပါ
 • Channel နာမည်ကို နှိပ်ပါ
 • 🔔 Notifications ကို Enable လုပ်ပါ
-
-✅ ပြီးပါပြီ! နေ့စဉ် မနက် ၇:၀၀ နာရီတွင် သတင်းစာ ရောက်လာပါလိမ့်မယ်။
     """
     await update.message.reply_text(subscribe_text, parse_mode='Markdown')
 
-# ===================== CALLBACK HANDLERS (Button Clicks) =====================
+# ===================== CALLBACK HANDLERS =====================
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle Inline Button Clicks"""
     query = update.callback_query
     await query.answer()
     
     if query.data == 'today':
         await query.message.reply_text("⏳ သတင်းစာ ရှာဖွေနေပါသည်...")
-        filename, newspaper_name = fetch_newspaper()
+        filename, newspaper_name = await context.bot.loop.run_in_executor(None, fetch_newspaper)
         
         if filename:
             today_str = datetime.datetime.now().strftime("%d-%m-%Y")
@@ -217,8 +219,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     
     elif query.data == 'subscribe':
-        await query.message.edit_text(
-            "🔔 *Notification ဖွင့်နည်း*\n\n1️⃣ @YourChannelUsername ကို Join လုပ်ပါ\n2️⃣ Channel Settings မှာ Notifications ဖွင့်ပါ",
+         await query.message.edit_text(
+            "🔔 *Notification ဖွင့်နည်း*\n\nChannel ကို Join ပြီး Notification On ထားပါ။",
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 နောက်သို့", callback_data='back_to_menu')]])
         )
@@ -239,50 +241,33 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=get_main_menu()
         )
 
-# ===================== WELCOME NEW MEMBERS =====================
-
-async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Welcome new channel/group members"""
-    for member in update.message.new_chat_members:
-        if not member.is_bot:
-            welcome_msg = f"""
-👋 *ကြိုဆိုပါတယ် {member.first_name}!*
-
-မြန်မာ့နေ့စဉ်သတင်းစာ Channel မှ ကြိုဆိုပါတယ်။
-
-📰 နေ့စဉ် မနက် ၇:၀၀ နာရီတွင် သတင်းစာ အလိုအလျောက် ရောက်လာပါလိမ့်မယ်။
-
-🔔 Notification ဖွင့်ထားဖို့ မမေ့ပါနဲ့!
-            """
-            await update.message.reply_text(welcome_msg, parse_mode='Markdown')
-
 # ===================== MAIN =====================
 
 def main():
     """Start the bot"""
-    keep_alive()  # Render Web Server ကို စတင်ပါ
-    print("Bot is starting...")
+    # 1. Start Flask Server (Background Thread)
+    keep_alive()
     
-    app = Application.builder().token(BOT_TOKEN).build()
+    # 2. Check Token
+    if not BOT_TOKEN:
+        print("Error: BOT_TOKEN is missing!")
+        return
+
+    # 3. Build Telegram Bot
+    # (variable name 'bot_app' to distinguish from 'flask_app')
+    bot_app = Application.builder().token(BOT_TOKEN).build()
     
-    # Command Handlers
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("today", today_command))
-    app.add_handler(CommandHandler("archive", archive_command))
-    app.add_handler(CommandHandler("subscribe", subscribe_command))
+    # Add Handlers
+    bot_app.add_handler(CommandHandler("start", start))
+    bot_app.add_handler(CommandHandler("help", help_command))
+    bot_app.add_handler(CommandHandler("today", today_command))
+    bot_app.add_handler(CommandHandler("archive", archive_command))
+    bot_app.add_handler(CommandHandler("subscribe", subscribe_command))
+    bot_app.add_handler(CallbackQueryHandler(button_callback))
     
-    # Callback Handler (for inline buttons)
-    app.add_handler(CallbackQueryHandler(button_callback))
-    
-    # Welcome new members
-    # (Note: Use ChatMemberHandler in newer versions, but MessageHandler works for basic entry)
-    # app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
-    
-    # Start polling
-    print("Bot is running!")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    # 4. Start Polling
+    print("Bot is starting polling...")
+    bot_app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
-    from telegram.ext import MessageHandler, filters
     main()
