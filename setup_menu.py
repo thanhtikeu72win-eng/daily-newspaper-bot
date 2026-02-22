@@ -1,28 +1,33 @@
+import os
 import requests
 import json
 
-# --- ပြင်ဆင်ရန် ---
-BOT_TOKEN = "7793780937:AAGGzXmJl3mN7n6YYxYlB0JPnZAtvAZzWeQ"  # BotFather ဆီက Token
-CHANNEL_ID = "@kyaymoneNews"       # မိတ်ဆွေ Channel ID
-ADMIN_USERNAME = "Than Htike Win" # Admin ရဲ့ Username (ဥပမာ: mgmg123) - @ မပါရ
-# ------------------
+# GitHub Secrets မှ Token ယူမည်
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHANNEL_ID = os.getenv("CHANNEL_ID")
+# Admin Username ကိုတော့ ဒီမှာ ပြင်ထည့်ပါ
+ADMIN_USERNAME = "Than Htike Win" 
 
 def send_pinned_menu():
+    if not BOT_TOKEN or not CHANNEL_ID:
+        print("Error: BOT_TOKEN or CHANNEL_ID not found in secrets!")
+        return
+
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     
-    # ခလုတ်များ ဖန်တီးခြင်း
+    # Bot Username ကို အရင်လှမ်းယူမယ် (Link ချိတ်ဖို့)
+    bot_info = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getMe").json()
+    bot_username = bot_info['result']['username']
+
     keyboard = {
         "inline_keyboard": [
             [
-                # ၁. Archive (Bot ဆီမှာ သွားရှာခိုင်းမယ်)
-                {"text": "📚 ယခင်သတင်းစာများ (Archive)", "url": f"https://t.me/{get_bot_username()}?start=archive"}
+                {"text": "📚 ယခင်သတင်းစာများ (Archive)", "url": f"https://t.me/{bot_username}?start=archive"}
             ],
             [
-                # ၂. Admin ဆီ ဆက်သွယ်ရန်
                 {"text": "📞 Admin သို့ ဆက်သွယ်ရန်", "url": f"https://t.me/{ADMIN_USERNAME}"}
             ],
             [
-                # ၃. Website Link
                 {"text": "🌐 MOI Website", "url": "https://www.moi.gov.mm"}
             ]
         ]
@@ -39,13 +44,9 @@ def send_pinned_menu():
         "reply_markup": json.dumps(keyboard)
     }
 
+    print(f"Sending Menu to {CHANNEL_ID}...")
     response = requests.post(url, data=data)
-    print(response.json())
-
-def get_bot_username():
-    # Bot username ကို အလိုအလျောက် ဆွဲယူခြင်း
-    r = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getMe")
-    return r.json()['result']['username']
+    print("Response:", response.text)
 
 if __name__ == "__main__":
     send_pinned_menu()
