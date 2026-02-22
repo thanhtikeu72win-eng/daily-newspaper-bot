@@ -1,0 +1,25 @@
+name: Run Setup Menu Manually
+
+on:
+  workflow_dispatch:  # ဒါက ခလုတ်နှိပ်မှ Run မယ်လို့ ဆိုလိုတာပါ
+
+jobs:
+  run-menu-script:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run Setup Menu Script
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+        run: python setup_menu.py
