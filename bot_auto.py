@@ -41,10 +41,7 @@ def check_and_download(url, newspaper_name):
     print(f"🔍 Checking {newspaper_name}...")
     try:
         # Website ကို ချိတ်ဆက်ခြင်း (Timeout 30s)
-        headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-}
-response = requests.get(url, headers=headers, timeout=30)
+        response = requests.get(url, timeout=30)
         soup = BeautifulSoup(response.content, 'html.parser')
         
         article_link = None
@@ -120,7 +117,7 @@ def job():
 
     # ၃. နှစ်ခုလုံး မတွေ့ရင်
     print("⛔ No newspapers found.")
-    send_telegram_message("⛔ ဒီနေ့ သတင်းစာတိုက်များပိတ်ပါသည်။")
+    send_telegram_message("⛔ ဒီနေ့ သတင်းစာရှာမတွေ့ပါ (သို့) ပိတ်ရက်ဖြစ်နိုင်ပါသည်။")
 
 if __name__ == "__main__":
     job()
