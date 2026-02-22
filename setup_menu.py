@@ -2,23 +2,28 @@ import os
 import requests
 import json
 
-# GitHub Secrets မှ Token ယူမည်
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_ID = os.getenv("CHANNEL_ID")
-# Admin Username ကိုတော့ ဒီမှာ ပြင်ထည့်ပါ
-ADMIN_USERNAME = "thanhtikeu72win" 
+# GitHub Secrets မှ ယူမည်
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+CHANNEL_ID = os.environ.get("CHANNEL_ID")
+# Admin Username (Space မပါ)
+ADMIN_USERNAME = "thanhtikeu72win"
 
 def send_pinned_menu():
     if not BOT_TOKEN or not CHANNEL_ID:
-        print("Error: BOT_TOKEN or CHANNEL_ID not found in secrets!")
+        print("Error: Token or Channel ID missing!")
+        return
+
+    # Bot Username ကို အလိုအလျောက် ယူမည်
+    try:
+        me = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getMe").json()
+        bot_username = me['result']['username']
+    except:
+        print("Error: Invalid Token")
         return
 
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     
-    # Bot Username ကို အရင်လှမ်းယူမယ် (Link ချိတ်ဖို့)
-    bot_info = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getMe").json()
-    bot_username = bot_info['result']['username']
-
+    # ခလုတ် (၂) ခု
     keyboard = {
         "inline_keyboard": [
             [
@@ -26,9 +31,6 @@ def send_pinned_menu():
             ],
             [
                 {"text": "📞 Admin သို့ ဆက်သွယ်ရန်", "url": f"https://t.me/{ADMIN_USERNAME}"}
-            ],
-            [
-                {"text": "🌐 MOI Website", "url": "https://www.moi.gov.mm"}
             ]
         ]
     }
@@ -37,8 +39,8 @@ def send_pinned_menu():
         "chat_id": CHANNEL_ID,
         "text": (
             "📰 **Daily Newspaper Control Panel**\n\n"
-            "✅ နေ့စဉ် သတင်းစာများကို မနက် ၇:၀၀ တွင် အလိုအလျောက် ပို့ပေးပါမည်။\n"
-            "✅ ယခင်ရက်စွဲဟောင်းများ (Archive) ကို ရှာဖွေလိုပါက အောက်ပါခလုတ်ကို နှိပ်ပါ။"
+            "✅ နေ့စဉ် ကြေးမုံသတင်းစာများကို ဤနေရာတွင် ဖတ်ရှုနိုင်ပါသည်။\n"
+            "✅ ယခင်ရက်စွဲဟောင်းများ ရှာလိုပါက Archive ခလုတ်ကို နှိပ်ပါ။"
         ),
         "parse_mode": "Markdown",
         "reply_markup": json.dumps(keyboard)
