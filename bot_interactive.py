@@ -6,6 +6,24 @@ from urllib.parse import unquote
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, ChatMemberHandler
 from telegram.constants import ChatMemberStatus
+from flask import Flask
+from threading import Thread
+
+# --- Flask Server (Render အတွက် မရှိမဖြစ်) ---
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot is running!"
+
+def run():
+    # Render က ပေးမယ့် Port ကို သုံးပါမယ်
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
 
 # --- Secrets ---
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
@@ -242,6 +260,7 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 def main():
     """Start the bot"""
+    keep_alive()  # Render Web Server ကို စတင်ပါ
     print("Bot is starting...")
     
     app = Application.builder().token(BOT_TOKEN).build()
@@ -257,7 +276,8 @@ def main():
     app.add_handler(CallbackQueryHandler(button_callback))
     
     # Welcome new members
-    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
+    # (Note: Use ChatMemberHandler in newer versions, but MessageHandler works for basic entry)
+    # app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
     
     # Start polling
     print("Bot is running!")
