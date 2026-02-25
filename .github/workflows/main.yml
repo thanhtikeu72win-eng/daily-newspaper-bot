@@ -2,7 +2,7 @@ name: Daily Newspaper Bot
 
 on:
   schedule:
-    - cron: '50 23 * * *' # 00:00 UTC = 06:20 AM MM Time
+    - cron: '35 23 * * *' # 00:00 UTC = 06:05 AM MM Time
   workflow_dispatch:
 
 jobs:
