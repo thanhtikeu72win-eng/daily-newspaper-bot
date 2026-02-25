@@ -38,7 +38,7 @@ def send_pinned_menu():
     data = {
         "chat_id": CHANNEL_ID,
         "text": (
-            "📰 **Daily Newspaper Control Panel**\n\n"
+            "📰 **Welcome to MyanmarNewsWatch**\n\n"
             "✅ နေ့စဉ် ကြေးမုံသတင်းစာများကို ဤနေရာတွင် ဖတ်ရှုနိုင်ပါသည်။\n"
             "✅ ယခင်ရက်စွဲဟောင်းများ ရှာလိုပါက Archive ခလုတ်ကို နှိပ်ပါ။"
         ),
