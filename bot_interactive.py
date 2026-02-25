@@ -133,38 +133,119 @@ def echo_all(message):
         print(f"Error: {e}")
 
 # ===========================
-# အပိုင်း (ဂ) - Morning Auto Post
+# အပိုင်း (ဂ) - Morning Auto Post (Market Data)
 # ===========================
 
-def get_exchange_rates():
+# ၁. စက်သုံးဆီဈေး ရှာသည့် Function (Max Energy မှ)
+def get_fuel_prices():
+    try:
+        url = "https://maxenergy.com.mm/fuel-prices-list/"
+        response = requests.get(url, timeout=10)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # ဇယားထဲက ရန်ကုန်ဈေးနှုန်းကို ရှာမယ် (Table logic က Website ပေါ်မူတည်ပြီး ပြောင်းလဲနိုင်သည်)
+        # ရိုးရှင်းအောင် ပထမဆုံးတွေ့တဲ့ Row (များသောအားဖြင့် ရန်ကုန်) ကို ယူပါမယ်
+        table = soup.find('table')
+        rows = table.find_all('tr')
+        
+        # Row 1 or 2 မှာ Data ရှိတတ်တယ်
+        yangon_row = rows[1].find_all('td') 
+        
+        octane_92 = yangon_row[1].text.strip()
+        octane_95 = yangon_row[2].text.strip()
+        diesel = yangon_row[3].text.strip()
+        premium_diesel = yangon_row[4].text.strip()
+        
+        return (
+            f"⛽️ **စက်သုံးဆီဈေး (Max - YGN)**\n"
+            f"▪️ 92: {octane_92} Ks\n"
+            f"▪️ 95: {octane_95} Ks\n"
+            f"▪️ Diesel: {diesel} Ks\n"
+            f"▪️ P-Diesel: {premium_diesel} Ks\n"
+        )
+    except Exception as e:
+        print(f"Fuel Error: {e}")
+        return "⛽️ စက်သုံးဆီဈေး: Server Error (or) Website Changed\n"
+
+# ၂. CBM ငွေလဲနှုန်း ရှာသည့် Function
+def get_cbm_rates():
     try:
         url = "https://forex.cbm.gov.mm/api/latest"
-        response = requests.get(url, timeout=10).json()
+        response = requests.get(url).json()
         rates = response['rates']
         date_str = response['info']
         
-        msg = (
-            f"🌤 **မင်္ဂလာမနက်ခင်းပါ** ({date_str})\n\n"
-            f"🏦 **ဗဟိုဘဏ် ငွေလဲလှယ်နှုန်းများ**\n"
-            f"🇺🇸 USD: {rates.get('USD','-')} MMK\n"
-            f"🇪🇺 EUR: {rates.get('EUR','-')} MMK\n"
-            f"🇸🇬 SGD: {rates.get('SGD','-')} MMK\n"
-            f"🇹🇭 THB: {rates.get('THB','-')} MMK\n\n"
-            f"🗞 _ဒီနေ့ သတင်းစာ ခဏအကြာတွင် ရောက်ရှိပါမည်..._"
+        usd = rates.get('USD', 'N/A').replace(',', '')
+        eur = rates.get('EUR', 'N/A').replace(',', '')
+        sgd = rates.get('SGD', 'N/A').replace(',', '')
+        thb = rates.get('THB', 'N/A').replace(',', '')
+        
+        return (
+            f"🏦 **ဗဟိုဘဏ် ငွေလဲလှယ်နှုန်း** ({date_str})\n"
+            f"🇺🇸 USD: {usd} Ks\n"
+            f"🇪🇺 EUR: {eur} Ks\n"
+            f"🇸🇬 SGD: {sgd} Ks\n"
+            f"🇹🇭 THB: {thb} Ks\n"
         )
-        return msg
     except Exception as e:
-        print(f"Error fetching rates: {e}")
-        return "🌤 မင်္ဂလာမနက်ခင်းပါ! သတင်းစာ မကြာမီ လာပါမည်။"
+        print(f"CBM Error: {e}")
+        return "🏦 CBM Rate: Not Available\n"
 
+# ၃. ရွှေဈေး (YGEA Reference)
+def get_gold_price():
+    # YGEA ဝဘ်ဆိုက်က Scraping လုပ်ရခက်ခဲတတ်လို့ ရိုးရှင်းတဲ့ Text ပဲ ထည့်ထားပါတယ်
+    # အကယ်၍ Source ရှိရင် ဒီနေရာမှာ requests.get နဲ့ ထည့်ရေးလို့ရပါတယ်
+    return (
+        f"🏆 **ရန်ကုန်ရွှေအသင်း (YGEA) ရည်ညွှန်းဈေး**\n"
+        f"▪️ Website တွင် ဝင်ရောက်ကြည့်ရှုပါ: https://www.ygea.org.mm\n"
+    )
+
+# ၄. မနက်ခင်း Post စုစည်းပေးပို့ခြင်း
 def send_morning_post():
     if CHANNEL_ID:
-        msg = get_exchange_rates()
+        # Data တွေကို စုစည်းမယ်
+        cbm_data = get_cbm_rates()
+        fuel_data = get_fuel_prices()
+        gold_data = get_gold_price()
+        
+        # ပြင်ပပေါက်ဈေး (Market Rate) အတွက် မှတ်ချက်
+        market_note = (
+            "📉 _(ပြင်ပပေါက်ဈေးများသည် အချိန်နှင့်အမျှ ပြောင်းလဲနိုင်ပါသဖြင့် "
+            "သက်ဆိုင်ရာ Dealer များထံတွင် အတည်ပြုပါ)_\n"
+        )
+
+        final_msg = (
+            f"🌤 **မင်္ဂလာမနက်ခင်းပါ** \n"
+            f"➖➖➖➖➖➖➖➖➖➖\n\n"
+            f"{cbm_data}\n"
+            f"{fuel_data}\n"
+            f"{gold_data}\n"
+            f"{market_note}\n"
+            f"🗞 _ဒီနေ့ သတင်းစာ ခဏအကြာတွင် ရောက်ရှိပါမည်..._"
+        )
+
         try:
-            bot.send_message(CHANNEL_ID, msg, parse_mode="Markdown")
-            print("Morning post sent!")
+            bot.send_message(CHANNEL_ID, final_msg, parse_mode="Markdown")
+            print("Morning briefing sent!")
         except Exception as e:
             print(f"Failed to send morning post: {e}")
+
+# Scheduler Function (အဟောင်းအတိုင်းထားပါ)
+def run_scheduler():
+    while True:
+        try:
+            tz = pytz.timezone('Asia/Yangon')
+            now = datetime.now(tz)
+            
+            # မနက် ၆:၀၀ အတိတွင် တင်မည်
+            if now.hour == 6 and now.minute == 0 and now.second < 10:
+                send_morning_post()
+                time.sleep(60)
+            
+            time.sleep(1)
+        except Exception as e:
+            print(f"Scheduler Error: {e}")
+            time.sleep(5)
 
 # ===========================
 # အပိုင်း (ဃ) - Server & Scheduler Loop
