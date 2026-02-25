@@ -6,7 +6,7 @@ import json
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHANNEL_ID = os.environ.get("CHANNEL_ID")
 # Admin Username (Space မပါ)
-ADMIN_USERNAME = "thanhtikeu72win"
+ADMIN_USERNAME = "Balagyi"
 
 def send_pinned_menu():
     if not BOT_TOKEN or not CHANNEL_ID:
