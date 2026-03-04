@@ -136,36 +136,50 @@ def echo_all(message):
 # အပိုင်း (ဂ) - Morning Auto Post (Market Data)
 # ===========================
 
-# ၁. စက်သုံးဆီဈေး ရှာသည့် Function (Max Energy မှ)
+# ၁. စက်သုံးဆီဈေး ရှာသည့် Function (Denko မှ ပြောင်းယူမည်)
 def get_fuel_prices():
     try:
-        url = "https://maxenergy.com.mm/fuel-prices-list/"
-        response = requests.get(url, timeout=10)
+        url = "https://denkomyanmar.com/"
+        # Browser အစစ်ယောင်ဆောင်သော Headers (ဒါမပါရင် Server Error တက်သည်)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        
+        response = requests.get(url, headers=headers, timeout=15)
         soup = BeautifulSoup(response.content, 'html.parser')
         
-        # ဇယားထဲက ရန်ကုန်ဈေးနှုန်းကို ရှာမယ် (Table logic က Website ပေါ်မူတည်ပြီး ပြောင်းလဲနိုင်သည်)
-        # ရိုးရှင်းအောင် ပထမဆုံးတွေ့တဲ့ Row (များသောအားဖြင့် ရန်ကုန်) ကို ယူပါမယ်
+        # Denko ဇယားကို ရှာမယ်
         table = soup.find('table')
-        rows = table.find_all('tr')
         
-        # Row 1 or 2 မှာ Data ရှိတတ်တယ်
-        yangon_row = rows[1].find_all('td') 
-        
-        octane_92 = yangon_row[1].text.strip()
-        octane_95 = yangon_row[2].text.strip()
-        diesel = yangon_row[3].text.strip()
-        premium_diesel = yangon_row[4].text.strip()
-        
-        return (
-            f"⛽️ **စက်သုံးဆီဈေး (Max - YGN)**\n"
-            f"▪️ 92: {octane_92} Ks\n"
-            f"▪️ 95: {octane_95} Ks\n"
-            f"▪️ Diesel: {diesel} Ks\n"
-            f"▪️ P-Diesel: {premium_diesel} Ks\n"
-        )
+        if table:
+            rows = table.find_all('tr')
+            # Data စာသား စမည်
+            msg = "⛽️ **စက်သုံးဆီဈေး (Denko - YGN)**\n"
+            
+            # Row 1 to 5 ကို လှည့်ပတ်ရှာမယ်
+            for row in rows[1:6]:
+                cols = row.find_all(['td', 'th'])
+                if len(cols) >= 2:
+                    fuel_name = cols[0].text.strip()
+                    price = cols[1].text.strip()
+                    
+                    # လိုချင်တဲ့ ဆီအမျိုးအစား ဟုတ်မဟုတ် စစ်မယ်
+                    if "92" in fuel_name:
+                        msg += f"▪️ 92: {price}\n"
+                    elif "95" in fuel_name:
+                        msg += f"▪️ 95: {price}\n"
+                    elif "Premium" in fuel_name:
+                        msg += f"▪️ P-Diesel: {price}\n"
+                    elif "Diesel" in fuel_name:
+                        msg += f"▪️ Diesel: {price}\n"
+            
+            return msg
+        else:
+            return "⛽️ စက်သုံးဆီဈေး: Table Not Found (Website Changed)\n"
+
     except Exception as e:
         print(f"Fuel Error: {e}")
-        return "⛽️ စက်သုံးဆီဈေး: Server Error (or) Website Changed\n"
+        return "⛽️ စက်သုံးဆီဈေး: Server Error (Connection Failed)\n"
 
 # ၂. CBM ငွေလဲနှုန်း ရှာသည့် Function
 def get_cbm_rates():
