@@ -136,50 +136,58 @@ def echo_all(message):
 # အပိုင်း (ဂ) - Morning Auto Post (Market Data)
 # ===========================
 
-# ၁. စက်သုံးဆီဈေး ရှာသည့် Function (Denko မှ ပြောင်းယူမည်)
+# ၁. စက်သုံးဆီဈေး ရှာသည့် Function (Max Energy မှ)
 def get_fuel_prices():
     try:
-        url = "https://denkomyanmar.com/"
-        # Browser အစစ်ယောင်ဆောင်သော Headers (ဒါမပါရင် Server Error တက်သည်)
+        url = "https://maxenergy.com.mm/fuel-prices-list/"
+        
+        # 🛑 ပြင်ဆင်ချက် (၁) - Browser မှ ဝင်သကဲ့သို့ ယောင်ဆောင်ရပါမည် 🛑
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
         }
         
+        # headers ကို ထည့်သွင်း အသုံးပြုထားသည်
         response = requests.get(url, headers=headers, timeout=15)
+        
+        # Website မှ ဝင်ခွင့်မပေးပါက Error ကို အတိအကျပြရန်
+        if response.status_code != 200:
+            return f"⛽️ စက်သုံးဆီဈေး: ချိတ်ဆက်၍မရပါ (Error {response.status_code})\n"
+
         soup = BeautifulSoup(response.content, 'html.parser')
         
-        # Denko ဇယားကို ရှာမယ်
+        # 🛑 ပြင်ဆင်ချက် (၂) - HTML Structure များ ပြောင်းသွားပါက Error မတက်စေရန် ကာကွယ်ခြင်း 🛑
         table = soup.find('table')
-        
-        if table:
-            rows = table.find_all('tr')
-            # Data စာသား စမည်
-            msg = "⛽️ **စက်သုံးဆီဈေး (Denko - YGN)**\n"
-            
-            # Row 1 to 5 ကို လှည့်ပတ်ရှာမယ်
-            for row in rows[1:6]:
-                cols = row.find_all(['td', 'th'])
-                if len(cols) >= 2:
-                    fuel_name = cols[0].text.strip()
-                    price = cols[1].text.strip()
-                    
-                    # လိုချင်တဲ့ ဆီအမျိုးအစား ဟုတ်မဟုတ် စစ်မယ်
-                    if "92" in fuel_name:
-                        msg += f"▪️ 92: {price}\n"
-                    elif "95" in fuel_name:
-                        msg += f"▪️ 95: {price}\n"
-                    elif "Premium" in fuel_name:
-                        msg += f"▪️ P-Diesel: {price}\n"
-                    elif "Diesel" in fuel_name:
-                        msg += f"▪️ Diesel: {price}\n"
-            
-            return msg
-        else:
-            return "⛽️ စက်သုံးဆီဈေး: Table Not Found (Website Changed)\n"
+        if not table:
+             return "⛽️ စက်သုံးဆီဈေး: Max Website တွင် ဇယားရှာမတွေ့ပါ\n"
 
+        rows = table.find_all('tr')
+        if len(rows) < 2:
+            return "⛽️ စက်သုံးဆီဈေး: Data အလွတ်ဖြစ်နေပါသည်\n"
+
+        yangon_row = rows[1].find_all('td') 
+        if len(yangon_row) < 5:
+            return "⛽️ စက်သုံးဆီဈေး: Website ပုံစံပြောင်းသွားပါသည်\n"
+        
+        octane_92 = yangon_row[1].text.strip()
+        octane_95 = yangon_row[2].text.strip()
+        diesel = yangon_row[3].text.strip()
+        premium_diesel = yangon_row[4].text.strip()
+        
+        return (
+            f"⛽️ **စက်သုံးဆီဈေး (Max - YGN)**\n"
+            f"▪️ 92: {octane_92}\n"
+            f"▪️ 95: {octane_95}\n"
+            f"▪️ Diesel: {diesel}\n"
+            f"▪️ P-Diesel: {premium_diesel}\n"
+        )
+        
+    except requests.exceptions.Timeout:
+        return "⛽️ စက်သုံးဆီဈေး: Connection လေးလံနေပါသည်\n"
     except Exception as e:
-        print(f"Fuel Error: {e}")
-        return "⛽️ စက်သုံးဆီဈေး: Server Error (Connection Failed)\n"
+        # Render Log တွင် Error အတိအကျကို ကြည့်နိုင်ရန် print ထုတ်ထားသည်
+        print(f"Max Energy Scraping Error: {e}") 
+        return "⛽️ စက်သုံးဆီဈေး: Server Error (or) Website Changed\n"
 
 # ၂. CBM ငွေလဲနှုန်း ရှာသည့် Function
 def get_cbm_rates():
