@@ -1,17 +1,17 @@
 name: Run Setup Menu Manually
 
 on:
-  workflow_dispatch:  # ဒါက ခလုတ်နှိပ်မှ Run မယ်လို့ ဆိုလိုတာပါ
+  workflow_dispatch:  # ခလုတ်နှိပ်မှ Run မည်
 
 jobs:
   run-menu-script:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
