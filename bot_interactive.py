@@ -411,4 +411,10 @@ if __name__ == "__main__":
     Thread(target=run_scheduler, daemon=True).start()
 
     print("Bot started...")
-    bot.infinity_polling(skip_pending=True, timeout=30, long_polling_timeout=30)
+    # 409 Conflict (instance အဟောင်းက မပိတ်သေးခြင်း) ဖြစ်လည်း မပျက်ဘဲ ပြန်စမ်းမည်
+    while True:
+        try:
+            bot.infinity_polling(timeout=30, long_polling_timeout=30)
+        except Exception as e:
+            print(f"Polling stopped: {e} - 15 စက္ကန့်အကြာ ပြန်စမည်")
+            time.sleep(15)
