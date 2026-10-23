@@ -1,123 +1,145 @@
+"""
+Manual backup script (GitHub Actions → Run workflow)
+ကြေးမုံ (မရရင် မြန်မာ့အလင်း) PDF ကို Telegram Channel သို့ ပို့သည်။
+"""
 import os
-import requests
-from bs4 import BeautifulSoup
+import sys
 import datetime
+import urllib.parse
 from urllib.parse import unquote
 
-# --- Secrets ---
-BOT_TOKEN = os.environ.get('BOT_TOKEN')
-CHANNEL_ID = os.environ.get('CHANNEL_ID')
+import requests
+from bs4 import BeautifulSoup
 
-# URLs
-KM_URL = "https://www.moi.gov.mm/km/"
-MAL_URL = "https://www.moi.gov.mm/mal/"
+# --- Secrets ---
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+CHANNEL_ID = os.environ.get("CHANNEL_ID")
+
+BASE = "https://www.moi.gov.mm"
+PAPERS = [
+    {"name": "ကြေးမုံ", "url": f"{BASE}/km/", "path": "/km/"},
+    {"name": "မြန်မာ့အလင်း", "url": f"{BASE}/mal/", "path": "/mal/"},
+]
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+}
+
+MM_TZ = datetime.timezone(datetime.timedelta(hours=6, minutes=30))
+FILE_LIMIT = 49 * 1024 * 1024
+
+
+def full_url(href):
+    return href if href.startswith("http") else urllib.parse.urljoin(BASE + "/", href)
+
 
 def send_telegram_file(file_path, caption):
-    """File ကို Telegram သို့ ပို့ခြင်း"""
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
     try:
-        with open(file_path, 'rb') as f:
-            files = {'document': f}
-            data = {'chat_id': CHANNEL_ID, 'caption': caption}
+        with open(file_path, "rb") as f:
             print(f"Uploading {file_path} to Telegram...")
-            response = requests.post(url, files=files, data=data, timeout=120) # Timeout တိုးထားသည်
-            if response.status_code == 200:
-                print("✅ File Sent Successfully!")
-                return True
-            else:
-                print(f"❌ Failed to send: {response.text}")
-                return False
+            res = requests.post(
+                url,
+                files={"document": f},
+                data={"chat_id": CHANNEL_ID, "caption": caption},
+                timeout=120,
+            )
+        if res.status_code == 200:
+            print("✅ File Sent Successfully!")
+            return True
+        print(f"❌ Failed to send: {res.text}")
+        return False
     except Exception as e:
         print(f"❌ Error sending file: {e}")
         return False
 
+
 def send_telegram_message(text):
-    """စာသား Message ပို့ခြင်း"""
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    data = {'chat_id': CHANNEL_ID, 'text': text}
-    requests.post(url, data=data)
-
-def check_and_download(url, newspaper_name):
-    print(f"🔍 Checking {newspaper_name}...")
     try:
-        # Website ကို ချိတ်ဆက်ခြင်း (Timeout 30s)
-        response = requests.get(url, timeout=30)
-        soup = BeautifulSoup(response.content, 'html.parser')
-        
-        article_link = None
-        target_path = '/km/' if 'km' in url else '/mal/'
-        
-        # Link ရှာဖွေခြင်း logic
-        for link in soup.find_all('a', href=True):
-            href = link['href']
-            # Link ထဲမှာ target path ပါပြီး ဂဏန်းတွေ ပါရမယ် (ရက်စွဲ)
-            if target_path in href and any(char.isdigit() for char in href):
-                 article_link = href
-                 break # ပထမဆုံးတွေ့တာကို ယူမယ် (Latest)
-        
-        if not article_link:
-            print(f"⚠️ No link found for {newspaper_name}.")
-            return None
-
-        full_article_url = article_link if article_link.startswith('http') else "https://www.moi.gov.mm" + article_link
-        print(f"📄 Found Page: {full_article_url}")
-
-        # PDF ရှာခြင်း
-        article_response = requests.get(full_article_url, timeout=30)
-        article_soup = BeautifulSoup(article_response.content, 'html.parser')
-        
-        pdf_url = None
-        for link in article_soup.find_all('a', href=True):
-            if link['href'].lower().endswith('.pdf'):
-                pdf_url = link['href']
-                break
-        
-        if pdf_url:
-            full_pdf_url = pdf_url if pdf_url.startswith('http') else "https://www.moi.gov.mm" + pdf_url
-            print(f"⬇️ Downloading PDF: {full_pdf_url}")
-            
-            # Download (Timeout 120s)
-            pdf_response = requests.get(full_pdf_url, timeout=120)
-            
-            # ဖိုင်နာမည် ရယူခြင်း
-            original_filename = unquote(full_pdf_url.split('/')[-1])
-            
-            with open(original_filename, 'wb') as f:
-                f.write(pdf_response.content)
-            
-            print(f"💾 Saved as: {original_filename}")
-            return original_filename
-        else:
-            print(f"⚠️ PDF not found inside page.")
-            return None
-
+        requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+            data={"chat_id": CHANNEL_ID, "text": text},
+            timeout=30,
+        )
     except Exception as e:
-        print(f"❌ Error processing {newspaper_name}: {e}")
+        print(f"❌ Error sending message: {e}")
+
+
+def check_and_download(paper):
+    name = paper["name"]
+    print(f"🔍 Checking {name}...")
+    try:
+        res = requests.get(paper["url"], headers=HEADERS, timeout=30)
+        soup = BeautifulSoup(res.content, "html.parser")
+
+        candidates = []
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            url = full_url(href)
+            if (
+                paper["path"] in href
+                and any(c.isdigit() for c in href)
+                and url.rstrip("/") != paper["url"].rstrip("/")
+                and url not in candidates
+            ):
+                candidates.append(url)
+
+        if not candidates:
+            print(f"⚠️ No link found for {name}.")
+            return None
+
+        for article_url in candidates[:5]:
+            print(f"📄 Trying page: {article_url}")
+            try:
+                res2 = requests.get(article_url, headers=HEADERS, timeout=30)
+                soup2 = BeautifulSoup(res2.content, "html.parser")
+                for a in soup2.find_all("a", href=True):
+                    if a["href"].lower().split("?")[0].endswith(".pdf"):
+                        pdf_url = full_url(a["href"])
+                        print(f"⬇️ Downloading PDF: {pdf_url}")
+                        pdf = requests.get(pdf_url, headers=HEADERS, timeout=120)
+                        if pdf.status_code != 200 or not pdf.content:
+                            print(f"⚠️ PDF download failed: HTTP {pdf.status_code}")
+                            continue
+                        if len(pdf.content) > FILE_LIMIT:
+                            print("⚠️ PDF too large for Telegram")
+                            send_telegram_message(f"📰 {name}: {pdf_url}")
+                            return "SENT_LINK"
+                        filename = unquote(pdf_url.split("?")[0].split("/")[-1]) or "newspaper.pdf"
+                        with open(filename, "wb") as f:
+                            f.write(pdf.content)
+                        print(f"💾 Saved as: {filename}")
+                        return filename
+            except Exception as e:
+                print(f"⚠️ Page error ({article_url}): {e}")
+
+        print(f"⚠️ PDF not found for {name}.")
+        return None
+    except Exception as e:
+        print(f"❌ Error processing {name}: {e}")
         return None
 
-def job():
-    today_str = datetime.datetime.now().strftime("%d-%m-%Y")
-    print(f"--- Starting Job: {today_str} ---")
-    
-    # ၁. ကြေးမုံ
-    km_file = check_and_download(KM_URL, "Kyemon")
-    if km_file:
-        caption = f"📰 ကြေးမုံသတင်းစာ ({today_str})"
-        success = send_telegram_file(km_file, caption)
-        if success:
-            return # ကြေးမုံရရင် ပြီးပြီ
 
-    # ၂. မြန်မာ့အလင်း (ကြေးမုံမရမှ ရှာမယ်)
-    mal_file = check_and_download(MAL_URL, "MyanmarAlin")
-    if mal_file:
-        caption = f"📰 မြန်မာ့အလင်းသတင်းစာ ({today_str})"
-        success = send_telegram_file(mal_file, caption)
-        if success:
+def job():
+    today_str = datetime.datetime.now(MM_TZ).strftime("%d-%m-%Y")
+    print(f"--- Starting Job: {today_str} ---")
+
+    for paper in PAPERS:
+        result = check_and_download(paper)
+        if result == "SENT_LINK":
+            return
+        if result and send_telegram_file(result, f"📰 {paper['name']}သတင်းစာ ({today_str})"):
             return
 
-    # ၃. နှစ်ခုလုံး မတွေ့ရင်
     print("⛔ No newspapers found.")
     send_telegram_message("⛔ ဒီနေ့ သတင်းစာရှာမတွေ့ပါ (သို့) ပိတ်ရက်ဖြစ်နိုင်ပါသည်။")
 
+
 if __name__ == "__main__":
+    if not BOT_TOKEN or not CHANNEL_ID:
+        sys.exit("BOT_TOKEN / CHANNEL_ID secrets မရှိပါ")
     job()
