@@ -2,38 +2,38 @@ name: Daily Newspaper Bot
 
 on:
   schedule:
-    - cron: '35 23 * * *' # 00:00 UTC = 06:05 AM MM Time
+    - cron: '35 23 * * *'   # 06:05 AM Myanmar time
   workflow_dispatch:
 
 jobs:
   run-bot:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: '3.12'
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
+        run: pip install requests beautifulsoup4
 
       - name: Run Bot Script
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
         run: python bot_auto.py
-        
+
       - name: Keepalive Commit
+        if: always()
         run: |
-          git config --global user.name "GitHub Action"
-          git config --global user.email "action@github.com"
+          git config user.name "GitHub Action"
+          git config user.email "action@github.com"
           git pull --rebase
-          git commit --allow-empty -m "keepalive" || echo "No changes to commit"
+          git commit --allow-empty -m "keepalive [skip render]"
           git push
