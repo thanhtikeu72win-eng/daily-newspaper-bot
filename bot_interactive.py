@@ -1,70 +1,172 @@
+"""
+Daily Newspaper Bot (Render)
+- မနက် ၆:၀၀  : ငွေလဲနှုန်း / ဆီဈေး Morning Post
+- မနက် ၆:၀၅+ : ကြေးမုံ (မရရင် မြန်မာ့အလင်း) PDF ကို Channel သို့ အလိုအလျောက်ပို့ (မရသေးရင် ၁၀ မိနစ်တစ်ခါ ပြန်စမ်း၊ ၈:၀၀ အထိ)
+- ခလုတ်နှိပ်ရင် PDF ကို တိုက်ရိုက်ပို့ပေးသည်
+
+Environment variables (Render): BOT_TOKEN, CHANNEL_ID
+"""
+
 import os
-import telebot
-import requests
 import time
-import pytz
 import urllib.parse
-from threading import Thread
-from flask import Flask
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from datetime import datetime
-from bs4 import BeautifulSoup  # Web Scraping အတွက်
+from threading import Thread
+from urllib.parse import unquote
 
+import pytz
+import requests
+import telebot
+from bs4 import BeautifulSoup
+from flask import Flask
+from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+# ===========================
 # 1. Setup
-BOT_TOKEN = os.environ.get('BOT_TOKEN')
-CHANNEL_ID = os.environ.get('CHANNEL_ID') 
+# ===========================
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+CHANNEL_ID = os.environ.get("CHANNEL_ID")
+PORT = int(os.environ.get("PORT", 8080))
+
+if not BOT_TOKEN:
+    raise SystemExit("BOT_TOKEN environment variable မရှိပါ")
+
 bot = telebot.TeleBot(BOT_TOKEN)
+MM_TZ = pytz.timezone("Asia/Yangon")
 
-# MOI URLs
-KM_URL = "https://www.moi.gov.mm/km/"
-MAL_URL = "https://www.moi.gov.mm/mal/"
+BASE = "https://www.moi.gov.mm"
+PAPERS = {
+    "km": {"name": "ကြေးမုံ", "url": f"{BASE}/km/", "path": "/km/"},
+    "mal": {"name": "မြန်မာ့အလင်း", "url": f"{BASE}/mal/", "path": "/mal/"},
+}
 
-# ===========================
-# အပိုင်း (က) - Helper Functions (Scraping)
-# ===========================
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+}
 
-def get_direct_pdf_link(base_url):
-    """MOI Website မှ နောက်ဆုံးရ PDF Link ကို ရှာပေးသော Function"""
+TELEGRAM_FILE_LIMIT = 49 * 1024 * 1024  # Bot upload limit ~50MB
+
+
+def now_mm():
+    return datetime.now(MM_TZ)
+
+
+def full_url(href):
+    if href.startswith("http"):
+        return href
+    if href.startswith("//"):
+        return "https:" + href
+    return urllib.parse.urljoin(BASE + "/", href)
+
+
+def safe_send(chat_id, text, **kwargs):
+    """Markdown error ဖြစ်ရင် parse_mode မပါဘဲ ပြန်ပို့မည်"""
     try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        # 1. Category Page ကို ဆွဲမည်
-        res = requests.get(base_url, headers=headers, timeout=15)
-        soup = BeautifulSoup(res.content, 'html.parser')
-        
-        article_link = None
-        target_path = '/km/' if 'km' in base_url else '/mal/'
-        
-        # Link ရှာခြင်း
-        for link in soup.find_all('a', href=True):
-            if target_path in link['href'] and any(c.isdigit() for c in link['href']):
-                article_link = link['href']
-                break # အပေါ်ဆုံး Link (Latest) ကို ယူမည်
-        
-        if not article_link: return None
-        
-        # 2. Article Page ထဲ ဝင်မည်
-        full_article_url = article_link if article_link.startswith('http') else "https://www.moi.gov.mm" + article_link
-        res2 = requests.get(full_article_url, headers=headers, timeout=15)
-        soup2 = BeautifulSoup(res2.content, 'html.parser')
-        
-        # 3. PDF ရှာမည်
-        for link in soup2.find_all('a', href=True):
-            if link['href'].lower().endswith('.pdf'):
-                pdf_url = link['href']
-                # Full URL ပြန်ပေးမည်
-                return pdf_url if pdf_url.startswith('http') else "https://www.moi.gov.mm" + pdf_url
+        return bot.send_message(chat_id, text, **kwargs)
+    except Exception as e:
+        print(f"send_message error: {e}")
+        if kwargs.get("parse_mode"):
+            kwargs.pop("parse_mode")
+            try:
+                return bot.send_message(chat_id, text, **kwargs)
+            except Exception as e2:
+                print(f"send_message retry error: {e2}")
+        return None
+
+
+# ===========================
+# 2. Scraping Helpers
+# ===========================
+def find_pdf_link(paper_key):
+    """
+    MOI category page မှ နောက်ဆုံးထုတ် Article များကို ဖွင့်ပြီး PDF link ရှာသည်။
+    ပထမ link မှာ PDF မရှိရင် နောက် link (အများဆုံး ၅ ခု) ကို ဆက်စမ်းသည်။
+    """
+    info = PAPERS[paper_key]
+    try:
+        res = requests.get(info["url"], headers=HEADERS, timeout=30)
+        soup = BeautifulSoup(res.content, "html.parser")
+
+        candidates = []
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            url = full_url(href)
+            if (
+                info["path"] in href
+                and any(c.isdigit() for c in href)
+                and url.rstrip("/") != info["url"].rstrip("/")
+                and url not in candidates
+            ):
+                candidates.append(url)
+
+        for article_url in candidates[:5]:
+            try:
+                res2 = requests.get(article_url, headers=HEADERS, timeout=30)
+                soup2 = BeautifulSoup(res2.content, "html.parser")
+                for a in soup2.find_all("a", href=True):
+                    if a["href"].lower().split("?")[0].endswith(".pdf"):
+                        return full_url(a["href"])
+            except Exception as e:
+                print(f"Article fetch error ({article_url}): {e}")
         return None
     except Exception as e:
-        print(f"Scraping Error: {e}")
+        print(f"Scraping Error ({paper_key}): {e}")
         return None
 
-# ===========================
-# အပိုင်း (ခ) - User Handlers
-# ===========================
 
-@bot.message_handler(commands=['start'])
+def download_pdf(pdf_url):
+    """PDF ကို download ဆွဲပြီး (filename, bytes) ပြန်ပေးသည်"""
+    try:
+        res = requests.get(pdf_url, headers=HEADERS, timeout=120)
+        if res.status_code != 200 or not res.content:
+            print(f"PDF download failed: HTTP {res.status_code}")
+            return None, None
+        filename = unquote(pdf_url.split("?")[0].split("/")[-1]) or "newspaper.pdf"
+        return filename, res.content
+    except Exception as e:
+        print(f"PDF download error: {e}")
+        return None, None
+
+
+def send_paper(chat_id, paper_key, with_loading=False):
+    """သတင်းစာ PDF ကို ရှာ → download → Telegram သို့ ပို့။ အောင်မြင်ရင် True"""
+    name = PAPERS[paper_key]["name"]
+    today_str = now_mm().strftime("%d-%m-%Y")
+
+    pdf_url = find_pdf_link(paper_key)
+    if not pdf_url:
+        return False
+
+    filename, data = download_pdf(pdf_url)
+    if data and len(data) <= TELEGRAM_FILE_LIMIT:
+        try:
+            bot.send_document(
+                chat_id,
+                (filename, data),
+                caption=f"📰 {name}သတင်းစာ ({today_str})",
+                timeout=120,
+            )
+            return True
+        except Exception as e:
+            print(f"send_document error: {e}")
+
+    # ဖိုင်ကြီးလွန်း/ပို့မရရင် Link ပေးမည်
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton(f"⬇️ {name} Download ယူရန် နှိပ်ပါ", url=pdf_url))
+    sent = safe_send(chat_id, f"📰 {name}သတင်းစာ ({today_str})", reply_markup=markup)
+    return sent is not None
+
+
+# ===========================
+# 3. User Handlers
+# ===========================
+@bot.message_handler(commands=["start"])
 def send_welcome(message):
-    user_name = message.from_user.first_name
+    user_name = message.from_user.first_name if message.from_user else ""
     msg = (
         f"🙏 မင်္ဂလာပါ {user_name}!\n\n"
         "📰 **ယနေ့ သတင်းစာများ ရယူရန်**\n"
@@ -72,241 +174,241 @@ def send_welcome(message):
         "📅 **ရက်ဟောင်းများ ရှာလိုလျှင်**\n"
         "ရက်စွဲကို ရိုက်ထည့်ပါ (ဥပမာ - 21-2-2026)"
     )
-    
     markup = InlineKeyboardMarkup()
-    # Direct Download Buttons
-    btn_km = InlineKeyboardButton("📥 ကြေးမုံ (Today)", callback_data="dl_km")
-    btn_mal = InlineKeyboardButton("📥 မြန်မာ့အလင်း (Today)", callback_data="dl_mal")
-    markup.row(btn_km, btn_mal)
-    
-    bot.reply_to(message, msg, reply_markup=markup, parse_mode="Markdown")
-
-# Callback Handler for Buttons
-@bot.callback_query_handler(func=lambda call: call.data.startswith('dl_'))
-def handle_download_buttons(call):
-    paper_type = call.data.split('_')[1] # 'km' or 'mal'
-    name = "ကြေးမုံ" if paper_type == 'km' else "မြန်မာ့အလင်း"
-    url = KM_URL if paper_type == 'km' else MAL_URL
-    
-    # Loading Message
-    bot.answer_callback_query(call.id, f"{name} ကို ရှာဖွေနေပါသည်...")
-    loading_msg = bot.send_message(call.message.chat.id, f"🔍 **{name}** ယနေ့ထုတ် PDF ကို ရှာဖွေနေပါသည်... ခေတ္တစောင့်ပါ...", parse_mode="Markdown")
-    
-    # Scraping
-    pdf_link = get_direct_pdf_link(url)
-    
-    # Delete Loading Message
+    markup.row(
+        InlineKeyboardButton("📥 ကြေးမုံ (Today)", callback_data="dl_km"),
+        InlineKeyboardButton("📥 မြန်မာ့အလင်း (Today)", callback_data="dl_mal"),
+    )
     try:
-        bot.delete_message(call.message.chat.id, loading_msg.message_id)
-    except:
+        bot.reply_to(message, msg, reply_markup=markup, parse_mode="Markdown")
+    except Exception as e:
+        print(f"/start error: {e}")
+
+
+@bot.callback_query_handler(func=lambda call: call.data in ("dl_km", "dl_mal"))
+def handle_download_buttons(call):
+    paper_key = call.data.split("_")[1]
+    name = PAPERS[paper_key]["name"]
+    chat_id = call.message.chat.id
+
+    try:
+        bot.answer_callback_query(call.id, f"{name} ကို ရှာဖွေနေပါသည်...")
+    except Exception:
         pass
 
-    if pdf_link:
-        markup = InlineKeyboardMarkup()
-        btn_dl = InlineKeyboardButton(f"⬇️ {name} Download ယူရန် နှိပ်ပါ", url=pdf_link)
-        markup.add(btn_dl)
-        bot.send_message(call.message.chat.id, f"✅ **{name}** အတွက် Link ရပါပြီ!", reply_markup=markup, parse_mode="Markdown")
-    else:
-        bot.send_message(call.message.chat.id, f"⚠️ **{name}** ယနေ့စာစောင် Web Page တွင် မတွေ့ရှိရသေးပါ။ (ခေတ္တအကြာမှ ပြန်စမ်းပါ)", parse_mode="Markdown")
+    loading = safe_send(
+        chat_id,
+        f"🔍 **{name}** ယနေ့ထုတ် PDF ကို ရှာဖွေနေပါသည်... ခေတ္တစောင့်ပါ...",
+        parse_mode="Markdown",
+    )
 
-# Date Search Handler
+    ok = send_paper(chat_id, paper_key)
+
+    if loading:
+        try:
+            bot.delete_message(chat_id, loading.message_id)
+        except Exception:
+            pass
+
+    if not ok:
+        safe_send(
+            chat_id,
+            f"⚠️ **{name}** ယနေ့စာစောင် Web Page တွင် မတွေ့ရှိရသေးပါ။ (ခေတ္တအကြာမှ ပြန်စမ်းပါ)",
+            parse_mode="Markdown",
+        )
+
+
 @bot.message_handler(func=lambda msg: True)
-def echo_all(message):
+def date_search(message):
     try:
-        text = message.text.strip()
-        # ရက်စွဲပုံစံ စစ်ဆေးခြင်း (- သို့မဟုတ် / ပါဝင်လျှင်)
-        if "-" in text or "/" in text:
+        text = (message.text or "").strip()
+        if text and ("-" in text or "/" in text):
             raw_query = f'site:moi.gov.mm "{text}" Kyaymon'
-            encoded_query = urllib.parse.quote(raw_query)
-            search_url = f"https://www.google.com/search?q={encoded_query}"
-
+            search_url = "https://www.google.com/search?q=" + urllib.parse.quote(raw_query)
             markup = InlineKeyboardMarkup()
-            btn = InlineKeyboardButton("🔍 Google တွင် ရှာဖွေရန်", url=search_url)
-            markup.add(btn)
-            
-            bot.reply_to(message, f"📆 **{text}** အတွက် Archive ရှာဖွေမှု:", reply_markup=markup, parse_mode="Markdown")
-        else:
-            # ရက်စွဲမဟုတ်လျှင် ဘာမှမလုပ် (သို့မဟုတ်) Help ပြနိုင်သည်
-            pass 
-
+            markup.add(InlineKeyboardButton("🔍 Google တွင် ရှာဖွေရန်", url=search_url))
+            bot.reply_to(
+                message,
+                f"📆 **{text}** အတွက် Archive ရှာဖွေမှု:",
+                reply_markup=markup,
+                parse_mode="Markdown",
+            )
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"date_search error: {e}")
+
 
 # ===========================
-# အပိုင်း (ဂ) - Morning Auto Post (Market Data)
+# 4. Morning Post (Market Data)
 # ===========================
-
-# ၁. စက်သုံးဆီဈေး ရှာသည့် Function (Max Energy မှ)
 def get_fuel_prices():
     try:
-        url = "https://maxenergy.com.mm/fuel-prices-list/"
-        
-        # 🛑 ပြင်ဆင်ချက် (၁) - Browser မှ ဝင်သကဲ့သို့ ယောင်ဆောင်ရပါမည် 🛑
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
-        }
-        
-        # headers ကို ထည့်သွင်း အသုံးပြုထားသည်
-        response = requests.get(url, headers=headers, timeout=15)
-        
-        # Website မှ ဝင်ခွင့်မပေးပါက Error ကို အတိအကျပြရန်
-        if response.status_code != 200:
-            return f"⛽️ စက်သုံးဆီဈေး: ချိတ်ဆက်၍မရပါ (Error {response.status_code})\n"
+        res = requests.get(
+            "https://maxenergy.com.mm/fuel-prices-list/", headers=HEADERS, timeout=15
+        )
+        if res.status_code != 200:
+            return f"⛽️ စက်သုံးဆီဈေး: ချိတ်ဆက်၍မရပါ (Error {res.status_code})\n"
 
-        soup = BeautifulSoup(response.content, 'html.parser')
-        
-        # 🛑 ပြင်ဆင်ချက် (၂) - HTML Structure များ ပြောင်းသွားပါက Error မတက်စေရန် ကာကွယ်ခြင်း 🛑
-        table = soup.find('table')
+        soup = BeautifulSoup(res.content, "html.parser")
+        table = soup.find("table")
         if not table:
-             return "⛽️ စက်သုံးဆီဈေး: Max Website တွင် ဇယားရှာမတွေ့ပါ\n"
+            return "⛽️ စက်သုံးဆီဈေး: Max Website တွင် ဇယားရှာမတွေ့ပါ\n"
 
-        rows = table.find_all('tr')
+        rows = table.find_all("tr")
         if len(rows) < 2:
             return "⛽️ စက်သုံးဆီဈေး: Data အလွတ်ဖြစ်နေပါသည်\n"
 
-        yangon_row = rows[1].find_all('td') 
-        if len(yangon_row) < 5:
+        cols = rows[1].find_all("td")
+        if len(cols) < 5:
             return "⛽️ စက်သုံးဆီဈေး: Website ပုံစံပြောင်းသွားပါသည်\n"
-        
-        octane_92 = yangon_row[1].text.strip()
-        octane_95 = yangon_row[2].text.strip()
-        diesel = yangon_row[3].text.strip()
-        premium_diesel = yangon_row[4].text.strip()
-        
+
         return (
-            f"⛽️ **စက်သုံးဆီဈေး (Max - YGN)**\n"
-            f"▪️ 92: {octane_92}\n"
-            f"▪️ 95: {octane_95}\n"
-            f"▪️ Diesel: {diesel}\n"
-            f"▪️ P-Diesel: {premium_diesel}\n"
+            "⛽️ **စက်သုံးဆီဈေး (Max - YGN)**\n"
+            f"▪️ 92: {cols[1].text.strip()}\n"
+            f"▪️ 95: {cols[2].text.strip()}\n"
+            f"▪️ Diesel: {cols[3].text.strip()}\n"
+            f"▪️ P-Diesel: {cols[4].text.strip()}\n"
         )
-        
     except requests.exceptions.Timeout:
         return "⛽️ စက်သုံးဆီဈေး: Connection လေးလံနေပါသည်\n"
     except Exception as e:
-        # Render Log တွင် Error အတိအကျကို ကြည့်နိုင်ရန် print ထုတ်ထားသည်
-        print(f"Max Energy Scraping Error: {e}") 
+        print(f"Max Energy Error: {e}")
         return "⛽️ စက်သုံးဆီဈေး: Server Error (or) Website Changed\n"
 
-# ၂. CBM ငွေလဲနှုန်း ရှာသည့် Function
+
 def get_cbm_rates():
     try:
-        url = "https://forex.cbm.gov.mm/api/latest"
-        response = requests.get(url).json()
-        rates = response['rates']
-        date_str = response['info']
-        
-        usd = rates.get('USD', 'N/A').replace(',', '')
-        eur = rates.get('EUR', 'N/A').replace(',', '')
-        sgd = rates.get('SGD', 'N/A').replace(',', '')
-        thb = rates.get('THB', 'N/A').replace(',', '')
-        
+        data = requests.get("https://forex.cbm.gov.mm/api/latest", timeout=15).json()
+        rates = data["rates"]
+        date_str = data.get("info", "")
+
+        def r(code):
+            return str(rates.get(code, "N/A")).replace(",", "")
+
         return (
             f"🏦 **ဗဟိုဘဏ် ငွေလဲလှယ်နှုန်း** ({date_str})\n"
-            f"🇺🇸 USD: {usd} Ks\n"
-            f"🇪🇺 EUR: {eur} Ks\n"
-            f"🇸🇬 SGD: {sgd} Ks\n"
-            f"🇹🇭 THB: {thb} Ks\n"
+            f"🇺🇸 USD: {r('USD')} Ks\n"
+            f"🇪🇺 EUR: {r('EUR')} Ks\n"
+            f"🇸🇬 SGD: {r('SGD')} Ks\n"
+            f"🇹🇭 THB: {r('THB')} Ks\n"
         )
     except Exception as e:
         print(f"CBM Error: {e}")
         return "🏦 CBM Rate: Not Available\n"
 
-# ၃. ရွှေဈေး (YGEA Reference)
+
 def get_gold_price():
-    # YGEA ဝဘ်ဆိုက်က Scraping လုပ်ရခက်ခဲတတ်လို့ ရိုးရှင်းတဲ့ Text ပဲ ထည့်ထားပါတယ်
-    # အကယ်၍ Source ရှိရင် ဒီနေရာမှာ requests.get နဲ့ ထည့်ရေးလို့ရပါတယ်
     return (
-        f"🏆 **ရန်ကုန်ရွှေအသင်း (YGEA) ရည်ညွှန်းဈေး**\n"
-        f"▪️ Website တွင် ဝင်ရောက်ကြည့်ရှုပါ: https://www.ygea.org.mm\n"
+        "🏆 **ရန်ကုန်ရွှေအသင်း (YGEA) ရည်ညွှန်းဈေး**\n"
+        "▪️ Website တွင် ဝင်ရောက်ကြည့်ရှုပါ: https://www.ygea.org.mm\n"
     )
 
-# ၄. မနက်ခင်း Post စုစည်းပေးပို့ခြင်း
+
 def send_morning_post():
-    if CHANNEL_ID:
-        # Data တွေကို စုစည်းမယ်
-        cbm_data = get_cbm_rates()
-        fuel_data = get_fuel_prices()
-        gold_data = get_gold_price()
-        
-        # ပြင်ပပေါက်ဈေး (Market Rate) အတွက် မှတ်ချက်
-        market_note = (
-            "📉 _(ပြင်ပပေါက်ဈေးများသည် အချိန်နှင့်အမျှ ပြောင်းလဲနိုင်ပါသဖြင့် "
-            "သက်ဆိုင်ရာ Dealer များထံတွင် အတည်ပြုပါ)_\n"
-        )
+    if not CHANNEL_ID:
+        print("CHANNEL_ID မသတ်မှတ်ထားပါ")
+        return
+    market_note = (
+        "📉 _(ပြင်ပပေါက်ဈေးများသည် အချိန်နှင့်အမျှ ပြောင်းလဲနိုင်ပါသဖြင့် "
+        "သက်ဆိုင်ရာ Dealer များထံတွင် အတည်ပြုပါ)_\n"
+    )
+    final_msg = (
+        "🌤 **မင်္ဂလာမနက်ခင်းပါ**\n"
+        "➖➖➖➖➖➖➖➖➖➖\n\n"
+        f"{get_cbm_rates()}\n"
+        f"{get_fuel_prices()}\n"
+        f"{get_gold_price()}\n"
+        f"{market_note}\n"
+        "🗞 _ဒီနေ့ သတင်းစာ ခဏအကြာတွင် ရောက်ရှိပါမည်..._"
+    )
+    if safe_send(CHANNEL_ID, final_msg, parse_mode="Markdown"):
+        print("Morning briefing sent!")
 
-        final_msg = (
-            f"🌤 **မင်္ဂလာမနက်ခင်းပါ** \n"
-            f"➖➖➖➖➖➖➖➖➖➖\n\n"
-            f"{cbm_data}\n"
-            f"{fuel_data}\n"
-            f"{gold_data}\n"
-            f"{market_note}\n"
-            f"🗞 _ဒီနေ့ သတင်းစာ ခဏအကြာတွင် ရောက်ရှိပါမည်..._"
-        )
 
-        try:
-            bot.send_message(CHANNEL_ID, final_msg, parse_mode="Markdown")
-            print("Morning briefing sent!")
-        except Exception as e:
-            print(f"Failed to send morning post: {e}")
+# ===========================
+# 5. Daily Newspaper Job
+# ===========================
+def daily_paper_job():
+    """ကြေးမုံ ရရင် ပြီး၊ မရမှ မြန်မာ့အလင်း။ အောင်မြင်ရင် True"""
+    print(f"--- Newspaper job: {now_mm():%d-%m-%Y %H:%M} ---")
+    for key in ("km", "mal"):
+        if send_paper(CHANNEL_ID, key):
+            print(f"✅ {PAPERS[key]['name']} sent")
+            return True
+    print("⚠️ No newspaper found this attempt")
+    return False
 
-# Scheduler Function (အဟောင်းအတိုင်းထားပါ)
+
+# ===========================
+# 6. Scheduler
+# ===========================
+state = {"post": None, "paper": None, "notfound": None, "last_try": 0.0}
+
+
 def run_scheduler():
     while True:
         try:
-            tz = pytz.timezone('Asia/Yangon')
-            now = datetime.now(tz)
-            
-            # မနက် ၆:၀၀ အတိတွင် တင်မည်
-            if now.hour == 6 and now.minute == 0 and now.second < 10:
-                send_morning_post()
-                time.sleep(60)
-            
-            time.sleep(1)
+            if CHANNEL_ID:
+                now = now_mm()
+                today = now.date()
+                minutes = now.hour * 60 + now.minute
+
+                # ၆:၀၀ - ၆:၅၉ : Morning post (တစ်ရက်တစ်ခါ)
+                if 360 <= minutes < 420 and state["post"] != today:
+                    state["post"] = today
+                    send_morning_post()
+
+                # ၆:၀၅ - ၇:၅၉ : သတင်းစာ (မရသေးရင် ၁၀ မိနစ်တစ်ခါ ပြန်စမ်း)
+                if (
+                    365 <= minutes < 480
+                    and state["paper"] != today
+                    and time.time() - state["last_try"] >= 600
+                ):
+                    state["last_try"] = time.time()
+                    if daily_paper_job():
+                        state["paper"] = today
+
+                # ၈:၀၀ ထိ မရသေးရင် အကြောင်းကြား (တစ်ရက်တစ်ခါ)
+                if (
+                    480 <= minutes < 540
+                    and state["paper"] != today
+                    and state["notfound"] != today
+                ):
+                    state["notfound"] = today
+                    safe_send(
+                        CHANNEL_ID,
+                        "⛔ ဒီနေ့ သတင်းစာရှာမတွေ့ပါ (သို့) ပိတ်ရက်ဖြစ်နိုင်ပါသည်။",
+                    )
         except Exception as e:
             print(f"Scheduler Error: {e}")
-            time.sleep(5)
+        time.sleep(20)
+
 
 # ===========================
-# အပိုင်း (ဃ) - Server & Scheduler Loop
+# 7. Web Server (Uptime ping အတွက်)
 # ===========================
+app = Flask(__name__)
 
-app = Flask('')
 
-@app.route('/')
+@app.route("/")
 def home():
     return "Bot is running!"
 
+
+@app.route("/health")
+def health():
+    return {"status": "ok", "time": now_mm().isoformat()}
+
+
 def run_http():
-    app.run(host='0.0.0.0', port=8080)
+    app.run(host="0.0.0.0", port=PORT, threaded=True)
 
-def run_scheduler():
-    while True:
-        try:
-            tz = pytz.timezone('Asia/Yangon')
-            now = datetime.now(tz)
-            
-            # မနက် ၆:၀၀ အတိ (စက္ကန့် ၅၀ အတွင်း)
-            if now.hour == 6 and now.minute == 0 and now.second < 50:
-                send_morning_post()
-                time.sleep(60) # ၁ မိနစ် ပြည့်အောင်စောင့် (Double post မဖြစ်အောင်)
-            
-            time.sleep(10) # ၁၀ စက္ကန့်တစ်ခါ အချိန်စစ်မယ်
-        except Exception as e:
-            print(f"Scheduler Error: {e}")
-            time.sleep(10)
 
+# ===========================
+# 8. Main
+# ===========================
 if __name__ == "__main__":
-    # Web Server
-    t1 = Thread(target=run_http)
-    t1.start()
-    
-    # Scheduler
-    t2 = Thread(target=run_scheduler)
-    t2.start()
-    
-    # Bot Polling
+    Thread(target=run_http, daemon=True).start()
+    Thread(target=run_scheduler, daemon=True).start()
+
     print("Bot started...")
-    bot.infinity_polling()
+    bot.infinity_polling(skip_pending=True, timeout=30, long_polling_timeout=30)
